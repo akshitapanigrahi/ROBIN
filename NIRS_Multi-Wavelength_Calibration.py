@@ -3,7 +3,6 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtWidgets import QApplication, QVBoxLayout, QLabel, QWidget
 import serial
-import time
 from scipy.signal import butter, filtfilt, find_peaks
 
 # Initialize variables
@@ -17,7 +16,7 @@ timeVector = np.arange(numReadings) / Fs
 # Initialize calibration variables
 skintoneFactor = 1
 initialRedAbsorbance = []
-initialIRAbsorbance1 = []
+initialIRAbsorbance = [[] for _ in range(3)]  # Separate calibration buffers for each IR
 
 # Bandpass filter setup
 FcLow = 0.5  # Hz
@@ -63,12 +62,12 @@ win.show()
 
 # Connect to Arduino
 arduino = serial.Serial('COM8', 9600)
-time.sleep(2)  # Allow time for connection
 
 # Real-time data reading and plotting
 def update():
-    global skintoneFactor, initialRedAbsorbance, initialIRAbsorbance1, voltageData, PI_combined_data
+    global skintoneFactor, initialRedAbsorbance, initialIRAbsorbance, voltageData, PI_combined_data
 
+    # Read and parse data
     data = arduino.readline().decode().strip()
     voltage = np.array([float(x) for x in data.split(",")])
     voltageData[:, :-1] = voltageData[:, 1:]  # Shift data
@@ -85,37 +84,52 @@ def update():
     # Absorbance calculations
     refVoltageRed, refVoltageIR = 1.99, 1.97
     redAbsorbance = np.log10(refVoltageRed / red)
-    irAbsorbance1 = np.log10(refVoltageIR / IR1)
+    irAbsorbance = [
+        np.log10(refVoltageIR / IR1),
+        np.log10(refVoltageIR / IR2),
+        np.log10(refVoltageIR / IR3),
+    ]
 
     # Calibration
     if len(initialRedAbsorbance) < 10:
         initialRedAbsorbance.append(np.mean(redAbsorbance))
-        initialIRAbsorbance1.append(np.mean(irAbsorbance1))
+        for idx, absorbance in enumerate(irAbsorbance):
+            initialIRAbsorbance[idx].append(np.mean(absorbance))
         if len(initialRedAbsorbance) == 10:
-            skintoneRatio = np.mean(initialRedAbsorbance) / np.mean(initialIRAbsorbance1)
+            skintoneRatio = np.mean(initialRedAbsorbance) / np.mean(initialIRAbsorbance[0])
             skintoneFactor = 1.1 if skintoneRatio < 1.5 else 1
     else:
         redAbsorbance *= skintoneFactor
 
     # HbO2 and HHb calculations
-    epsilonO2Hb, epsilonHHb, pathLength = 0.25, 0.39, 0.15
-    O2Hb = abs(irAbsorbance1) / (epsilonO2Hb * pathLength)
+    epsilonO2Hb = [0.25, 0.26, 0.27]  # Distinct epsilon values for IR1, IR2, IR3
+    epsilonHHb = 0.39  # Epsilon for red
+    pathLength = 0.15
+
+    O2Hb = [abs(absorbance) / (epsilon * pathLength) for absorbance, epsilon in zip(irAbsorbance, epsilonO2Hb)]
     HHb = abs(redAbsorbance) / (epsilonHHb * pathLength)
-    HbT = O2Hb + HHb
-    SpO2 = (O2Hb / HbT) * 100
+
+    HbT = np.mean(O2Hb) + HHb
+    SpO2 = (np.mean(O2Hb) / HbT) * 100
 
     # Perfusion Index
     redDC = filtfilt(b_low, a_low, red)
     redAC = filtfilt(b, a, red)
     PI_red = (np.std(redAC) / np.mean(redDC)) * 100
 
-    PI_combined = PI_red
+    IRDC = [filtfilt(b_low, a_low, IR) for IR in [IR1, IR2, IR3]]
+    IRAC = [filtfilt(b, a, IR) for IR in [IR1, IR2, IR3]]
+
+    IRDCAvg = np.mean(IRDC, axis=0)
+    IRACAvg = np.mean(IRAC, axis=0)
+
+    PI_IR = (np.std(IRACAvg) / np.mean(IRDCAvg)) * 100
+    PI_combined = (PI_red + PI_IR) / 2
     PI_combined_data[:-1] = PI_combined_data[1:]  # Shift data
     PI_combined_data[-1] = PI_combined
 
-    # Pulse calculation
-    IRAC = filtfilt(b, a, IR1)
-    peaks, _ = find_peaks(IRAC, distance=int(Fs * 0.5))
+    # Heart rate calculation
+    peaks, _ = find_peaks(IRACAvg, distance=int(Fs * 0.5))
     timeDiff = np.diff(peaks) / Fs
     pulse = [0] + list(60 / timeDiff)
 
@@ -126,11 +140,10 @@ def update():
     curves["Pulse"].setData(timeVector, pulse[:numReadings])
 
     # Update labels
-    labels["SpO2"].setText(f"SpO2: {round(SpO2[-1], 2)} %")
-    labels["HbT"].setText(f"HbT: {round(HbT[-1], 2)} g/dL")
+    labels["SpO2"].setText(f"SpO2: {round(SpO2, 2)} %")
+    labels["HbT"].setText(f"HbT: {round(HbT, 2)} g/dL")
     labels["PI"].setText(f"PI: {round(PI_combined, 2)} %")
     labels["Pulse"].setText(f"HR: {round(pulse[-1], 2)} bpm")
-
 
 # Set timer for periodic updates
 timer = pg.QtCore.QTimer()
