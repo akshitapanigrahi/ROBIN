@@ -105,7 +105,7 @@ This project provides a Python-based GUI application to read, process, and visua
 3. **Launch the Application**:
    Run the Python script:
    ```bash
-   python <script_name>.py
+   python nirs_streaming.py
    ```
 
 4. **Interact with the GUI**:
