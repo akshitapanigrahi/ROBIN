@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Form</class>
+ <widget class="QWidget" name="Form">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>600</width>
+    <height>400</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Form</string>
+  </property>
+  <property name="autoFillBackground">
+   <bool>false</bool>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">background-color: rgb(159, 219, 251);</string>
+  </property>
+  <layout class="QGridLayout" name="gridLayout">
+   <item row="0" column="0">
+    <widget class="GraphicsLayoutWidget" name="graphicsView">
+     <property name="styleSheet">
+      <string notr="true">border-color: rgb(120, 153, 219);
+background-color: rgb(120, 153, 219);</string>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <layout class="QVBoxLayout" name="verticalLayout">
+     <item>
+      <widget class="QPushButton" name="streamButton">
+       <property name="styleSheet">
+        <string notr="true">font: 12pt &quot;Arial&quot;;
+background-color: rgb(120, 153, 219);</string>
+       </property>
+       <property name="text">
+        <string>Stream</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="stopButton">
+       <property name="styleSheet">
+        <string notr="true">font: 12pt &quot;Arial&quot;;
+background-color: rgb(120, 153, 219);</string>
+       </property>
+       <property name="text">
+        <string>Stop</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="resetButton">
+       <property name="styleSheet">
+        <string notr="true">font: 12pt &quot;Arial&quot;;
+background-color: rgb(120, 153, 219);</string>
+       </property>
+       <property name="text">
+        <string>Reset</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item row="1" column="0" colspan="2">
+    <widget class="QLabel" name="log">
+     <property name="styleSheet">
+      <string notr="true">font: 500 20pt &quot;Arial&quot;;</string>
+     </property>
+     <property name="text">
+      <string>ROBIN: Real-Time Oxygen and Blood Flow Insight for Neonates</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>GraphicsLayoutWidget</class>
+   <extends>QGraphicsView</extends>
+   <header>pyqtgraph</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>
