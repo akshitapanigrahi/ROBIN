@@ -13,19 +13,20 @@ import os
 
 # === Initialization ===
 Fs = 200  # Sampling rate in Hz
-numReadings = 150  # Window size for plotting
-voltageData = np.zeros((2, numReadings))  # [red, IR] voltage
+numReadings = 50  # Window size for plotting
+voltageData = np.zeros((3, numReadings))  # [red, IR] voltage
 PI_combined_data = np.zeros(numReadings)
 timeVector = np.arange(numReadings) / Fs
 
 # Reference voltages and constants
-refVoltageRed = 1.95
-refVoltageIR = 1.96
-refVoltageIR2 = 2.0
-epsilonO2Hb = 0.25
-epsilonO2Hb2 = 0.28
-epsilonHHb = 0.39
-pathLength = 0.15
+refVoltageRed = 1.91
+refVoltageIR = 1.95
+refVoltageIR2 = 1.94  # For the additional IR wavelength
+epsilonO2Hb = 0.27 # 880 nm
+epsilonO2Hb2 = 0.28  # For the additional IR wavelength, 940 nm
+epsilonHHb = 0.39 #red
+#epsilonHHb2 = 0.42  #dont think we need this one since we only have 1 red LED?
+pathLength = 0.09
 
 # Bandpass filter setup
 FcLow = 0.5  # Hz
@@ -34,7 +35,7 @@ b, a = butter(2, [FcLow / (Fs / 2), FcHigh / (Fs / 2)], btype='band')
 b_low, a_low = butter(2, FcLow / (Fs / 2), btype='low')
 
 # Serial Communication Setup
-arduino = serial.Serial("COM11", 9600)
+arduino = serial.Serial("/dev/cu.usbmodem11201", 9600)
 time.sleep(2)
 
 # GUI File
@@ -137,22 +138,33 @@ class MyApp(QtWidgets.QWidget):
             # Update the circular buffer
             voltageData[0, :-1] = voltageData[0, 1:]
             voltageData[1, :-1] = voltageData[1, 1:]
+            voltageData[2, :-1] = voltageData[2, 1:]
             voltageData[0, -1] = voltage[0]  # Red voltage
             voltageData[1, -1] = voltage[1]  # IR voltage
+            voltageData[2, -1] = voltage[2]  # IR2 voltage
 
             # Extract red and IR signals
             red = voltageData[0, :]
             IR = voltageData[1, :]
+            IR2 = voltageData[2, :]
             red[red <= 0] = 1e-6
             IR[IR <= 0] = 1e-6
+            IR2[IR2 <= 0] = 1e-6
+
+            print("Red Voltage:", voltage[0], "IR Voltage:", voltage[1])
 
             # Absorbance calculations
             redAbsorbance = np.log10(refVoltageRed / red)
             irAbsorbance = np.log10(refVoltageIR / IR)
+            ir2Absorbance = np.log10(refVoltageIR2 / IR2)
 
             # O2Hb and HHb calculations
             O2Hb = np.abs(irAbsorbance / (epsilonO2Hb * pathLength))
+            O2Hb2 = np.abs(ir2Absorbance / (epsilonO2Hb2 * pathLength))
             HHb = np.abs(redAbsorbance / (epsilonHHb * pathLength))
+            HHb2 = np.abs(redAbsorbance / (epsilonHHb * pathLength))
+
+            avgO2Hb = (O2Hb + O2Hb2) / 2
 
             # HbT and SpO2 calculations
             self.HbT = O2Hb + HHb
@@ -161,15 +173,18 @@ class MyApp(QtWidgets.QWidget):
             # Filtering
             redDC = filtfilt(b_low, a_low, red)
             IRDC = filtfilt(b_low, a_low, IR)
+            IR2DC = filtfilt(b_low, a_low, IR2)
 
             redAC = filtfilt(b, a, red)
             IRAC = filtfilt(b, a, IR)
+            IR2AC = filtfilt(b, a, IR2)
 
             # Perfusion Index (PI) calculation
             PI_red = (np.std(redAC) / np.mean(redDC)) * 100
             PI_IR = (np.std(IRAC) / np.mean(IRDC)) * 100
+            PI_IR2 = (np.std(IR2AC) / np.mean(IR2DC)) * 100
 
-            PI_combined = (PI_red + PI_IR) / 2
+            PI_combined = (PI_red + PI_IR + PI_IR2) / 3
 
             # Update the PI buffer
             PI_combined_data[:-1] = PI_combined_data[1:]
