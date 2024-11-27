@@ -40,6 +40,7 @@ epsilonMatrix = np.array([
     [0.17, 0.28]
 ])
 
+# Tissue differential path length factors for each wavelength 
 DPF_740 = 6.0
 DPF_880 = 6.2
 DPF_940 = 6.5
@@ -218,7 +219,7 @@ class MyApp(QtWidgets.QWidget):
 
             self.HbT = HHb + HbO2
 
-            self.SpO2 = (HbO2 / HbT) * 100
+            self.SpO2 = (HbO2 / self.HbT) * 100
 
             # Calculate absorbances using DC components
             # redAbsorbance = np.log10(refVoltageRed / redDC)
