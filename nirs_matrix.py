@@ -40,11 +40,11 @@ epsilonMatrix = np.array([
     [0.17, 0.28]
 ])
 
-# Tissue differential path length factors for each wavelength 
-DPF_740 = 6.0
-DPF_880 = 6.2
-DPF_940 = 6.5
-SDS = 2.5 #source-detector separation
+# Tissue differential path length factors for each wavelength --> lower if SpO2 is underestimated
+DPF_740 = 0.2
+DPF_880 = 0.25
+DPF_940 = 0.3
+SDS = 2.5 #source-detector separation (distance between LED and photodiodes)
 
 pathLengths = np.array([DPF_740 * SDS, DPF_880 * SDS, DPF_940 * SDS])
 
