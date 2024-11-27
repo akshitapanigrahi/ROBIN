@@ -46,7 +46,7 @@ DPF_880 = 6.2
 DPF_940 = 6.5
 SDS = 2.5 #source-detector separation
 
-pathLengths = np.array[DPF_740 * SDS, DPF_880 * SDS, DPF_940 * SDS]
+pathLengths = np.array([DPF_740 * SDS, DPF_880 * SDS, DPF_940 * SDS])
 
 # Bandpass filter setup
 FcLow = 0.5  # Hz
@@ -202,9 +202,9 @@ class MyApp(QtWidgets.QWidget):
             IR2AC = filtfilt(b, a, IR2)
 
             # Subtract baseline/background noise
-            redDC_corrected = redDC - np.mean(redDC)
-            IRDC_corrected = IRDC - np.mean(IRDC)
-            IR2DC_corrected = IR2DC - np.mean(IR2DC)
+            redDC_corrected = redDC - np.mean(redDC) + 1e-6
+            IRDC_corrected = IRDC - np.mean(IRDC)+ 1e-6
+            IR2DC_corrected = IR2DC - np.mean(IR2DC)+ 1e-6
 
             # Calculate absorbances
             absorbances = np.log10([
@@ -289,9 +289,9 @@ class MyApp(QtWidgets.QWidget):
             try:
                 self.update_counter += 1
                 if self.update_counter % 2 == 0:  # Update only every 2nd tick      
-                    self._curveHbT.setData(timeVector, 6.45 * self.HbT[:len(timeVector)])
+                    self._curveHbT.setData(timeVector, 6.45 * self.HbT[:len(timeVector)]) #in g/dL, expecting 10-16 g/dL
                     self._curveSpO2.setData(timeVector, self.SpO2[:len(timeVector)])
-                    self._curvePI.setData(timeVector, PI_combined_data[:len(timeVector)])
+                    self._curvePI.setData(timeVector, PI_combined_data[:len(timeVector)]) #1% to 10% range
                     self._curvePulse.setData(timeVector, self.pulse[:len(timeVector)])
                     self.update_counter = 0
             except Exception as e:
