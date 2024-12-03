@@ -55,7 +55,7 @@ b, a = butter(2, [FcLow / (Fs / 2), FcHigh / (Fs / 2)], btype='band')
 b_low, a_low = butter(2, FcLow / (Fs / 2), btype='low')
 
 # Serial Communication Setup
-arduino = serial.Serial("/dev/cu.usbmodem11201", 9600)
+arduino = serial.Serial("COM11", 9600)
 time.sleep(2)
 
 # GUI File
@@ -215,7 +215,7 @@ class MyApp(QtWidgets.QWidget):
 
             #Solve for HHb and HbO2 using matrix inversion
 
-            HHb, HbO2 = np.linalg.lstsq(epsilonMatrix, absorbances / pathLengths, rcond=None)[0]
+            HHb, HbO2 = np.linalg.lstsq(epsilonMatrix, absorbances / pathLengths[:, np.newaxis], rcond=None)[0]
 
             self.HbT = HHb + HbO2
 
