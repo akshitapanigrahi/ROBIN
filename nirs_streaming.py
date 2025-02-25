@@ -19,27 +19,41 @@ voltageData = np.zeros((3, numReadings))  # [red, IR] voltage
 PI_combined_data = np.zeros(numReadings)
 timeVector = np.arange(numReadings) / Fs
 
-# Reference voltages and constants
-refVoltageRed = 1.91
-refVoltageIR = 1.95
-refVoltageIR2 = 1.94  # For the additional IR wavelength
-epsilonO2Hb = 0.27 # 880 nm
-epsilonO2Hb2 = 0.28  # For the additional IR wavelength, 940 nm
-epsilonHHb = 0.39 #red
-#epsilonHHb2 = 0.42  #dont think we need this one since we only have 1 red LED?
-pathLength = 0.07
+# Reference voltages and constants, (L . mmor’ . cm’)
+refVoltageRed = 1.75 # 740 nm
+refVoltageIR = 1.75 # 880 nm
+refVoltageIR2 = 1.75  # 940 nm
 
-# Bandpass filter setup
+# Matrix of extinction coefficients, [HHb, HbO2]
+epsilonMatrix = np.array([
+    [0.40, 0.13],
+    [0.19, 0.27],
+    [0.17, 0.28]
+])
+
+# DPF values, based on tissue and wavelength
+DPF_740 = 6.0
+DPF_880 = 6.5
+DPF_940 = 6.0
+
+# Source-detector separation (distance between LED and photodiode), cm
+SDS = 6.0
+
+# Calculate path lengths
+pathLengths = np.array([DPF_740 * SDS, DPF_880 * SDS, DPF_940 * SDS])
+
+# Bandpass and low pass filter setup
 FcLow = 0.5  # Hz
 FcHigh = 2.5  # Hz
-b, a = butter(2, [FcLow / (Fs / 2), FcHigh / (Fs / 2)], btype='band')
-b_low, a_low = butter(2, FcLow / (Fs / 2), btype='low')
+b, a = butter(2, [FcLow / (Fs / 2), FcHigh / (Fs / 2)], btype='band') # bandpass
+b_low, a_low = butter(2, FcLow / (Fs / 2), btype='low') # lowpass
+PI_b, PI_a = butter(2, 0.1 / (Fs / 2), btype='low') #lowpass for PI
 
-# Serial Communication Setup
-arduino = serial.Serial("/dev/cu.usbmodem11201", 9600)
+# === Serial Communication Setup ===
+arduino = serial.Serial("/dev/cu.usbmodem1201", 9600)
 time.sleep(2)
 
-# GUI File
+# === GUI File ===
 qtDesignerFile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "robin_simple_gui.ui")
 
 class MyApp(QtWidgets.QWidget):
@@ -52,32 +66,29 @@ class MyApp(QtWidgets.QWidget):
 
         self.update_counter = 0
 
+        self.PI_rolling_window = np.zeros(50)  # Store the last 50 PI values
+        self.PI_current_value = 0  # Explicitly track the current PI value
+
         # Create HbT plot
         self.plotHbT = self.plot_layout.addPlot(title="NIRS HbT Readings")
         self._curveHbT = self.plotHbT.plot(pen='k', width=10)
-        self.plotHbT.setYRange(0, 30)  # Set Y-axis range for HbT
-        self.plotHbT.setLabel('left', 'HbT (µM)', units='µM')  # Add Y-axis label
+        self.plotHbT.setYRange(0, 60)  
+        self.plotHbT.setLabel('left', 'HbT', units='g/dL')  
         self.plot_layout.nextRow()
 
         # Create SpO2 plot
         self.plotSpO2 = self.plot_layout.addPlot(title="NIRS SpO2 Readings")
         self._curveSpO2 = self.plotSpO2.plot(pen='k', width=10)
-        self.plotSpO2.setYRange(50, 100)  # Set Y-axis range for SpO2
-        self.plotSpO2.setLabel('left', 'SpO₂ (%)', units='%')  # Add Y-axis label
+        self.plotSpO2.setYRange(40, 100)  
+        self.plotSpO2.setLabel('left', 'SpO₂', units='%')  
         self.plot_layout.nextRow()
 
         # Create PI plot
         self.plotPI = self.plot_layout.addPlot(title="Perfusion Index (PI)")
         self._curvePI = self.plotPI.plot(pen='k', width=10)
-        self.plotPI.setYRange(0, 20)  # Set Y-axis range for PI
-        self.plotPI.setLabel('left', 'PI (%)', units='%')  # Add Y-axis label
+        self.plotPI.setYRange(0, 6)  
+        self.plotPI.setLabel('left', 'PI', units='%')  
         self.plot_layout.nextRow()
-
-        # Create Heart Rate plot
-        self.plotPulse = self.plot_layout.addPlot(title="Heart Rate")
-        self._curvePulse = self.plotPulse.plot(pen='k', width=10)
-        self.plotPulse.setYRange(40, 120)  # Set Y-axis range for Heart Rate
-        self.plotPulse.setLabel('left', 'HR (BPM)', units='BPM')  # Add Y-axis label
 
         # Button connections using asyncSlot
         self.streamButton.clicked.connect(self.handle_start)
@@ -129,19 +140,6 @@ class MyApp(QtWidgets.QWidget):
 
         self.log.setText("Data reset complete.")
 
-    # def calculate_hr_fft(self, signal, fs):
-    #     if len(signal) < 2 * fs:
-    #         return 0  # Not enough data for FFT
-    #     signal = signal - np.mean(signal)  # Remove DC component
-    #     freqs = np.fft.rfftfreq(len(signal), 1 / fs)
-    #     fft_magnitude = np.abs(np.fft.rfft(signal))
-    #     valid_idx = (freqs >= 0.5) & (freqs <= 3.5)  # HR range: 30–210 BPM
-    #     if not np.any(valid_idx):
-    #         return 0  # No valid frequencies
-    #     dominant_freq = freqs[valid_idx][np.argmax(fft_magnitude[valid_idx])]
-    #     hr = dominant_freq * 60
-    #     return hr
-
     def update_plot(self):
         if not self.is_streaming:
             return
@@ -152,7 +150,7 @@ class MyApp(QtWidgets.QWidget):
             voltage = [float(x) for x in data.split(',')]
 
             # Update the circular buffer
-            voltageData[0, :-1] = voltageData[0, 1:]
+            voltageData[0, :-1] = voltageData[0, 1:] 
             voltageData[1, :-1] = voltageData[1, 1:]
             voltageData[2, :-1] = voltageData[2, 1:]
             voltageData[0, -1] = voltage[0]  # Red voltage
@@ -163,30 +161,16 @@ class MyApp(QtWidgets.QWidget):
             red = voltageData[0, :]
             IR = voltageData[1, :]
             IR2 = voltageData[2, :]
+
+            # Clamp negative values
             red[red <= 0] = 1e-6
             IR[IR <= 0] = 1e-6
             IR2[IR2 <= 0] = 1e-6
 
-            print("Red Voltage:", voltage[0], "IR Voltage:", voltage[1])
+            # Print statement for debugging
+            #print("Red Voltage:", voltage[0], "IR Voltage1:", voltage[1], "IR Voltage2:", voltage[2])
 
-            # Absorbance calculations
-            # redAbsorbance = np.log10(refVoltageRed / red)
-            # irAbsorbance = np.log10(refVoltageIR / IR)
-            # ir2Absorbance = np.log10(refVoltageIR2 / IR2)
-
-            # O2Hb and HHb calculations
-            # O2Hb = np.abs(irAbsorbance / (epsilonO2Hb * pathLength))
-            # O2Hb2 = np.abs(ir2Absorbance / (epsilonO2Hb2 * pathLength))
-            # HHb = np.abs(redAbsorbance / (epsilonHHb * pathLength))
-            # HHb2 = np.abs(redAbsorbance / (epsilonHHb * pathLength))
-
-            # avgO2Hb = (O2Hb + O2Hb2) / 2
-
-            # HbT and SpO2 calculations
-            # self.HbT = O2Hb + HHb
-            # self.SpO2 = (O2Hb / self.HbT) * 100
-
-            # Filtering
+            # Filter voltage signals to extract AC and DC components
             redDC = filtfilt(b_low, a_low, red)
             IRDC = filtfilt(b_low, a_low, IR)
             IR2DC = filtfilt(b_low, a_low, IR2)
@@ -195,130 +179,120 @@ class MyApp(QtWidgets.QWidget):
             IRAC = filtfilt(b, a, IR)
             IR2AC = filtfilt(b, a, IR2)
 
-            # Calculate absorbances using DC components
+            # Clamp negative DC values to avoid dividing by 0 
+            redDC[redDC <= 0] = 1e-6
+            IRDC[IRDC <= 0] = 1e-6
+            IR2DC[IR2DC <= 0] = 1e-6
+
+            # Calculate raw absorbances using DC components
+            redAbsorbanceRaw = np.log10(refVoltageRed / red)
+            irAbsorbanceRaw = np.log10(refVoltageIR / IR)
+            ir2AbsorbanceRaw = np.log10(refVoltageIR2 / IR2)
+
+            # Calculate filtered absorbances using DC components
             redAbsorbance = np.log10(refVoltageRed / redDC)
             irAbsorbance = np.log10(refVoltageIR / IRDC)
             ir2Absorbance = np.log10(refVoltageIR2 / IR2DC)
 
-            O2Hb = np.abs(irAbsorbance / (epsilonO2Hb * pathLength))
-            O2Hb2 = np.abs(ir2Absorbance / (epsilonO2Hb2 * pathLength))
-            HHb = np.abs(redAbsorbance / (epsilonHHb * pathLength))
-            HHb2 = np.abs(redAbsorbance / (epsilonHHb * pathLength))
+            # Calculate raw normalized absorbances
+            absorbanceVectorRaw = np.array([redAbsorbanceRaw, irAbsorbanceRaw, ir2AbsorbanceRaw])  
+            absorbanceVectorRaw = absorbanceVectorRaw / pathLengths[:, np.newaxis]
 
-            avgO2Hb = (O2Hb + O2Hb2) / 2
+            # Calculate filtered normalized absorbances
+            absorbanceVector = np.array([redAbsorbance, irAbsorbance, ir2Absorbance])  
+            absorbanceVector = absorbanceVector / pathLengths[:, np.newaxis]
+            
+            # Pseudo-inverse of epsilonMatrix
+            epsilonPseudoInverse = np.linalg.pinv(epsilonMatrix)
 
-            self.HbT = (avgO2Hb + HHb)
-            self.SpO2 = (avgO2Hb / self.HbT) * 100
+            # Calculate raw concentrations, C = [HHb, HbO2]
+            concentrationVectorRaw = epsilonPseudoInverse @ absorbanceVectorRaw  # [HHb, HbO2]
+            concentrationVectorRaw *= 1e3  # Scale HHb and HbO2 to µM
+            HHbRaw = concentrationVectorRaw[0]
+            HbO2Raw = concentrationVectorRaw[1]
 
-            # Perfusion Index (PI) calculation
-            PI_red = (np.std(redAC) / np.mean(redDC)) * 100
-            PI_IR = (np.std(IRAC) / np.mean(IRDC)) * 100
-            PI_IR2 = (np.std(IR2AC) / np.mean(IR2DC)) * 100
+            # Calculate filtered concentrations, C = [HHb, HbO2]
+            concentrationVector = epsilonPseudoInverse @ absorbanceVector  # [HHb, HbO2]
+            concentrationVector *= 1e3  # Scale HHb and HbO2 to µM --> mmol/L to uM 
+            HHb = concentrationVector[0]
+            HbO2 = concentrationVector[1]
 
-            PI_combined = (PI_red + PI_IR + PI_IR2) / 3
+            # Total Hemoglobin (HbT)
+            self.HbT = (HHb + HbO2) 
+            #self.HbT[self.HbT == 0] = 1e-6
 
-            # # Update the PI buffer
-            # PI_combined_data[:-1] = PI_combined_data[1:]
-            # PI_combined_data[-1] = PI_combined
+            # Oxygen Saturation (SpO2)
+            #self.SpO2 = (HbO2 / self.HbT) * 100 
+            self.SpO2 = np.minimum(1.0 * (HbO2 / self.HbT) * 100, 102)  # Cap SpO₂ at 100%
 
-            #         # Heart Rate Calculation
-            # # Use only the last 100 samples of IRAC for peak detection
-            # recent_IRAC = IRAC[-100:]  # Focus on the last 100 samples (0.5 seconds)
-            # peaks, _ = find_peaks(recent_IRAC, distance=round(Fs * 0.5))
-            # #peaks, _ = find_peaks(IRAC, distance=round(Fs * 0.5))  # Detect peaks in IRAC
-            # # if len(peaks) > 1:
-            # #     timeDiff = np.diff(peaks) / Fs
-            # #     self.pulse = 60 / np.mean(timeDiff)  # HR in BPM
-            # # else:
-            # #     self.pulse = 0  # Default to 0 if no peaks
+            # Chromophore-based perfusion Index (PI) calculation, more complex but more physiologically accurate
 
-            # # Ensure pulse is a buffer (array) that stores historical HR values
-            # if len(peaks) > 1:
-            #     timeDiff = np.diff(peaks) / Fs
-            #     hr = 60 / np.mean(timeDiff)  # HR in BPM
-            # else:
-            #     # Fallback to frequency-domain HR calculation
-            #     freqs = np.fft.rfftfreq(len(IRAC), d=1/Fs)
-            #     fft_spectrum = np.abs(np.fft.rfft(IRAC))
-            #     dominant_freq = freqs[np.argmax(fft_spectrum[1:]) + 1]  # Skip DC component
-            #     hr = dominant_freq * 60
+            HHb_AC = filtfilt(b, a, HHbRaw)
+            HHb_DC = filtfilt(PI_b, PI_a, HHbRaw)
 
-            # Perfusion Index (PI) calculation
-            try:
-                PI_red = (np.std(redAC) / max(np.mean(redDC), 1e-6)) * 100
-                PI_IR = (np.std(IRAC) / max(np.mean(IRDC), 1e-6)) * 100
-                PI_combined = (PI_red + PI_IR) / 2
-                PI_combined_data[:-1] = PI_combined_data[1:]
-                PI_combined_data[-1] = PI_combined
-            except ZeroDivisionError:
-                PI_combined = 0
+            HbO2_AC = filtfilt(b, a, HbO2Raw)
+            HbO2_DC = filtfilt(PI_b, PI_a, HbO2Raw)
 
-            # Heart Rate (Pulse) calculation
-            try:
-                recent_IRAC = IR2AC[-Fs * 5:]  # Last 5 seconds
-                peaks, _ = find_peaks(recent_IRAC, height=0.02, distance=round(Fs * 0.6))
-                if len(peaks) > 1:
-                    timeDiff = np.diff(peaks) / Fs
-                    hr = 60 / np.mean(timeDiff)
-                else:
-                    # freqs = np.fft.rfftfreq(len(recent_IRAC), d=1/Fs)
-                    # fft_spectrum = np.abs(np.fft.rfft(recent_IRAC))
-                    # dominant_freq = freqs[np.argmax(fft_spectrum[1:]) + 1]  # Skip DC component
-                    # print(dominant_freq)
-                    # hr = dominant_freq * 60
-                    freqs = np.fft.rfftfreq(len(IRAC), 1 / Fs)
-                    fft_spectrum = np.abs(np.fft.rfft(IRAC))
-                    valid_idx = (freqs >= 0.5) & (freqs <= 3.5)  # Restrict to HR-relevant frequencies
-                    if np.any(valid_idx):
-                        dominant_freq = freqs[valid_idx][np.argmax(fft_spectrum[valid_idx])]
-                    else:
-                        dominant_freq = 0  # No valid frequency found
-                    hr = dominant_freq * 60  # Convert frequency (Hz) to BPM
+            HHb_DC = np.maximum(filtfilt(PI_b, PI_a, red), 1e-6)
+            HbO2_DC = np.maximum(filtfilt(PI_b, PI_a, IR), 1e-6)
 
-                self.pulse[:-1] = self.pulse[1:]
-                self.pulse[-1] = hr
-            except Exception as e:
-                print(f"HR calculation error: {e}")
-                hr = 0
+            factor_AC = 2.5 # scaling factor 1.5
 
-            # Update pulse buffer
-            self.pulse[:-1] = self.pulse[1:]  # Shift left
-            self.pulse[-1] = hr  # Add the latest HR value
+            HHb_AC *= factor_AC  
+            HbO2_AC *= factor_AC
 
+            factor_DC = 0.6 # scaling factor < 1
 
-            # peaks, _ = find_peaks(IRAC, distance=round(Fs * 0.5))
-            # timeDiff = np.diff(peaks) / Fs
-            # if len(timeDiff) > 0:
-            #     self.pulse = np.pad(60 / timeDiff, (0, numReadings - len(timeDiff)), constant_values=0)
-            # else:
-            #     self.pulse = np.zeros(numReadings)
+            HHb_DC *= factor_DC  
+            HbO2_DC *= factor_DC
 
-            # Heart Rate (Pulse) calculation
-            # try:
-            #     hr = self.calculate_hr_fft(IRAC, Fs)
-            #     self.pulse[:-1] = self.pulse[1:]  # Shift left
-            #     self.pulse[-1] = hr  # Insert the latest HR value
-            # except Exception as e:
-            #     print(f"Heart rate calculation error: {e}")
-            #     self.pulse[-1] = 0  # Set HR to 0 in case of error
+            # Take AC/DC ratio, %
+            PI_HHb = (np.std(HHb_AC) / np.mean(HHb_DC)) * 100 * 5
+            PI_HbO2 = (np.std(HbO2_AC) / np.mean(HbO2_DC)) * 100  # should theoretically reflect PI better, shows more pulsatile variation
+
+            # Smooth transition from 0 using a simple moving average
+            alpha = 0.1  # Smoothing factor (adjust for smoother transition) --> increase for faster response
+
+            # Average PIs
+            #PI_combined_matrix = (PI_HHb + PI_HbO2) / 2 
+            #PI_combined_matrix = PI_HbO2 # relying on HbO2 alone
+            PI_combined_matrix = (0.8 * PI_HbO2 + 0.2 * PI_HHb) # weighted method
+
+            self.PI_current_value = (1 - alpha) * self.PI_current_value + alpha * PI_combined_matrix
+
+            # Debugging, HbO2_AC should decrease to almost 0 when tourniquet applied and should recover after release
+            print(f"HbO2_AC std: {np.std(HbO2_AC)}, HbO2_DC mean: {np.mean(HbO2_DC)}")
+            #print(f"HbO2: {HbO2}, HHb: {HHb}, HbT: {self.HbT}, SpO₂: {self.SpO2}")
+
+            if(np.std(HbO2_AC) > 0.2):
+                self.PI_current_value = max(self.PI_current_value - 1, 0)  # Gradually reduce, but not below 0
+            
+            # Apply moving average to stabilize data when displaying
+            def moving_average(data, window_size):
+                return np.convolve(data, np.ones(window_size)/window_size, mode='valid')
+            
+            def rolling_mean(data, window_size):
+                return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
+
+            # Update rolling window
+            self.PI_rolling_window = np.roll(self.PI_rolling_window, -1)
+            self.PI_rolling_window[-1] = self.PI_current_value  # Update with smoothed PI value
+
+            # Compute the rolling average
+            PI_average = np.mean(self.PI_rolling_window)
+
+            # Print PI to console (even when GUI is stopped)
+            print(f"Current PI: {0.1 * PI_average:.2f}%")
 
             # Update plots
             try:
                 self.update_counter += 1
-                if self.update_counter % 2 == 0:  # Update only every 5th tick
-                    # Update labels with current values
-                    # self.labelSpO2.setText(f"SpO₂: {int(self.SpO2[-1])}%")
-                    # self.labelHbT.setText(f"HbT: {int(self.HbT[-1]*6.45)}")
-                    # self.labelPI.setText(f"PI: {int(PI_combined)}%")
-                    # self.labelHR.setText(f"HR: {int(self.pulse[-1])} BPM")
-                    # self._curveHbT.setData(timeVector, self.HbT[:len(timeVector)] * 6.45)
-                    # self._curveSpO2.setData(timeVector, self.SpO2[:len(timeVector)])
-                    # self._curvePI.setData(timeVector, PI_combined_data[:len(timeVector)])
-                    # self._curvePulse.setData(timeVector, self.pulse[:len(timeVector)])
-                    self._curveHbT.setData(timeVector, 6.45 * self.HbT[:len(timeVector)])
-                    self._curveSpO2.setData(timeVector, self.SpO2[:len(timeVector)])
-                    self._curvePI.setData(timeVector, PI_combined_data[:len(timeVector)])
-                    self._curvePulse.setData(timeVector, self.pulse[:len(timeVector)])
+                if self.update_counter % 2 == 0:  # Update only every 2nd tick      
+                    self._curveHbT.setData(timeVector, 2.45 * np.abs(self.HbT[:len(timeVector)])) # HbT with absolute value safeguard, g/dl, changed scaling from 10 to 6.45
+                    self._curveSpO2.setData(timeVector, self.SpO2[:len(timeVector)]) # SpO2 values, %
+                    #self._curvePI.setData(timeVector, np.abs(PI_smoothed_padded) * 1.0) # smoothed PI values, %
+                    self._curvePI.setData(timeVector, 0.1 * np.full(len(timeVector), PI_average))
+
                     self.update_counter = 0
             except Exception as e:
                 print(f"Plotting error: {e}")
