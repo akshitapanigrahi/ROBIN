@@ -23,24 +23,27 @@ timeVector = np.arange(numReadings) / Fs
 refVoltageRed = 1.75 # 740 nm
 refVoltageIR = 1.75 # 880 nm
 refVoltageIR2 = 1.75  # 940 nm
+refVoltageIR3 = 1.75 # 850 nm? --> approx 845 nm for coefficients
 
 # Matrix of extinction coefficients, [HHb, HbO2]
 epsilonMatrix = np.array([
     [0.40, 0.13],
     [0.19, 0.27],
-    [0.17, 0.28]
+    [0.17, 0.28],
+    [0.18, 0.24]
 ])
 
-# DPF values, based on tissue and wavelength
+# DPF values, based on tissue and wavelength, need to double check these values
 DPF_740 = 6.0
 DPF_880 = 6.5
 DPF_940 = 6.0
+DPF_850 = 6.0
 
-# Source-detector separation (distance between LED and photodiode), cm
+# Source-detector separation (distance between LED and photodiode), cm --> does this change depending on wavelength? seems like it should be smaller...?
 SDS = 6.0
 
 # Calculate path lengths
-pathLengths = np.array([DPF_740 * SDS, DPF_880 * SDS, DPF_940 * SDS])
+pathLengths = np.array([DPF_740 * SDS, DPF_880 * SDS, DPF_940 * SDS, DPF_850 * SDS])
 
 # Bandpass and low pass filter setup
 FcLow = 0.5  # Hz
@@ -153,53 +156,64 @@ class MyApp(QtWidgets.QWidget):
             voltageData[0, :-1] = voltageData[0, 1:] 
             voltageData[1, :-1] = voltageData[1, 1:]
             voltageData[2, :-1] = voltageData[2, 1:]
+            voltageData[3, :-1] = voltageData[3, 1:]
             voltageData[0, -1] = voltage[0]  # Red voltage
             voltageData[1, -1] = voltage[1]  # IR voltage
             voltageData[2, -1] = voltage[2]  # IR2 voltage
+            voltageData[3, -1] = voltage[2]  # IR3 voltage
 
             # Extract red and IR signals
             red = voltageData[0, :]
             IR = voltageData[1, :]
             IR2 = voltageData[2, :]
+            IR3 = voltageData[3, :]
 
             # Clamp negative values
             red[red <= 0] = 1e-6
             IR[IR <= 0] = 1e-6
             IR2[IR2 <= 0] = 1e-6
+            IR3[IR3 <= 0] = 1e-6
+
+            print("running")
 
             # Print statement for debugging
-            #print("Red Voltage:", voltage[0], "IR Voltage1:", voltage[1], "IR Voltage2:", voltage[2])
+            #print("Red Voltage:", voltage[0], "IR Voltage1:", voltage[1], "IR Voltage2:", voltage[2], , "IR Voltage3:", voltage[3])
 
             # Filter voltage signals to extract AC and DC components
             redDC = filtfilt(b_low, a_low, red)
             IRDC = filtfilt(b_low, a_low, IR)
             IR2DC = filtfilt(b_low, a_low, IR2)
+            IR3DC = filtfilt(b_low, a_low, IR3)
 
             redAC = filtfilt(b, a, red)
             IRAC = filtfilt(b, a, IR)
             IR2AC = filtfilt(b, a, IR2)
+            IR3AC = filtfilt(b, a, IR3)
 
             # Clamp negative DC values to avoid dividing by 0 
             redDC[redDC <= 0] = 1e-6
             IRDC[IRDC <= 0] = 1e-6
             IR2DC[IR2DC <= 0] = 1e-6
+            IR3DC[IR3DC <= 0] = 1e-6
 
             # Calculate raw absorbances using DC components
             redAbsorbanceRaw = np.log10(refVoltageRed / red)
             irAbsorbanceRaw = np.log10(refVoltageIR / IR)
             ir2AbsorbanceRaw = np.log10(refVoltageIR2 / IR2)
+            ir3AbsorbanceRaw = np.log10(refVoltageIR3 / IR3)
 
             # Calculate filtered absorbances using DC components
             redAbsorbance = np.log10(refVoltageRed / redDC)
             irAbsorbance = np.log10(refVoltageIR / IRDC)
             ir2Absorbance = np.log10(refVoltageIR2 / IR2DC)
+            ir3Absorbance = np.log10(refVoltageIR3 / IR3DC)
 
             # Calculate raw normalized absorbances
-            absorbanceVectorRaw = np.array([redAbsorbanceRaw, irAbsorbanceRaw, ir2AbsorbanceRaw])  
+            absorbanceVectorRaw = np.array([redAbsorbanceRaw, irAbsorbanceRaw, ir2AbsorbanceRaw, ir3AbsorbanceRaw])  
             absorbanceVectorRaw = absorbanceVectorRaw / pathLengths[:, np.newaxis]
 
             # Calculate filtered normalized absorbances
-            absorbanceVector = np.array([redAbsorbance, irAbsorbance, ir2Absorbance])  
+            absorbanceVector = np.array([redAbsorbance, irAbsorbance, ir2Absorbance, ir3Absorbance])  
             absorbanceVector = absorbanceVector / pathLengths[:, np.newaxis]
             
             # Pseudo-inverse of epsilonMatrix
