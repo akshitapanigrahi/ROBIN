@@ -53,33 +53,86 @@ This project provides a Python-based GUI application to read, process, and visua
 
 3. **Load the Code**:
    Copy the following Arduino code into the IDE:
-   ```cpp
-   const int redPhotodiodePin = A0;
-   const int irPhotodiodePin1 = A3;
 
-   int rawRed = 0;
-   int rawIR1 = 0;
+---
+#include <ArduinoBLE.h>
 
-   float redVoltage = 0;
-   float irVoltage1 = 0;
+// Pins for your photodiodes
+const int redPhotodiodePin = A0;
+const int irPhotodiodePin1 = A1;
+const int irPhotodiodePin2 = A2;
+const int irPhotodiodePin3 = A3;
 
-   void setup() {
-       Serial.begin(9600);
-   }
+// We'll create a custom service and characteristic UUID.
+// You can generate your own UUIDs, or reuse these examples.
+BLEService sensorService("12345678-1234-5678-1234-56789ABCDEF0");
+BLECharacteristic dataCharacteristic(
+    "87654321-4321-6789-4321-0FEDCBA98765", 
+    BLERead | BLENotify, 
+    32  // enough size to hold our comma-separated values as text
+);
 
-   void loop() {
-       rawRed = analogRead(redPhotodiodePin);
-       rawIR1 = analogRead(irPhotodiodePin1);
+void setup() {
+  Serial.begin(115200); // Optional for debugging over Serial Monitor.
 
-       redVoltage = (rawRed / 1023.0) * 3.3;
-       irVoltage1 = (rawIR1 / 1023.0) * 3.3;
+  // Initialize BLE
+  if (!BLE.begin()) {
+    Serial.println("Failed to initialize BLE module!");
+    while (1);
+  }
+  Serial.println("BLE initialized.");
 
-       Serial.print(redVoltage);
-       Serial.print(",");
-       Serial.println(irVoltage1);
+  // Set device name and advertise the custom service
+  BLE.setLocalName("NIRS_BLE");
+  BLE.setAdvertisedService(sensorService);
 
-       delay(10); // 200 Hz sampling rate
-   }
+  // Add the characteristic to the service
+  sensorService.addCharacteristic(dataCharacteristic);
+
+  // Add the service to the BLE stack
+  BLE.addService(sensorService);
+
+  // Begin advertising
+  BLE.advertise();
+  Serial.println("BLE advertising started...");
+}
+
+void loop() {
+  // Keep the BLE stack updated
+  BLE.poll();
+
+  // Read your 3 photodiodes
+  int rawRed = analogRead(redPhotodiodePin);
+  int rawIR1 = analogRead(irPhotodiodePin1);
+  int rawIR2 = analogRead(irPhotodiodePin2);
+  int rawIR3 = analogRead(irPhotodiodePin3);
+
+
+  // Convert from 0-1023 ADC to 0-3.3V (Nano 33 BLE default is 0-3.3V)
+  float redVoltage = (rawRed / 1023.0) * 3.3;
+  float irVoltage1 = (rawIR1 / 1023.0) * 3.3;
+  float irVoltage2 = (rawIR2 / 1023.0) * 3.3;
+  float irVoltage3 = (rawIR3 / 1023.0) * 3.3;
+
+  // Create a comma-separated string: "redVoltage,irVoltage1,irVoltage2"
+  // Example: "1.23,2.34,3.45"
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%.3f,%.3f,%.3f,%.3f", redVoltage, irVoltage1, irVoltage2, irVoltage3);
+
+  // Write the string to the characteristic, which will notify connected clients
+  dataCharacteristic.writeValue((const unsigned char*)buf, strlen(buf));
+
+  Serial.print(redVoltage);
+  Serial.print(",");
+  Serial.print(irVoltage1);
+  Serial.print(",");
+  Serial.print(irVoltage2);
+  Serial.print(",");
+  Serial.println(irVoltage3);
+
+  // ~5 ms delay -> ~200 Hz
+  delay(5);
+}
    ```
 
 4. **Select the Board and Port**:
